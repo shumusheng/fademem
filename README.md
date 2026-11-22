@@ -244,13 +244,16 @@ fademem 认 `spec: chara_card_v2` 的格式。
 
 ### 一个实例接多角色
 
-复制两份配置，各自指向不同的端口、角色卡和记忆库：
+一个实例 = 一个角色 + 一个记忆库。第二个角色这样起：
 
 ```bash
-cp ~/.fademem/config.json ~/.fademem/b.json
-# 改 b.json 里的 server.port=8771、persona、memory.db
-fademem -c ~/.fademem/b.json serve
+fademem -c ~/.fademem/b.json init     # 角色卡和记忆库会自动落在 b.json 旁边
+fademem -c ~/.fademem/b.json serve --port 8771
 ```
+
+用 `-c` 指定自定义配置时，`persona.json` 和 `memory.db` 都放在配置文件同目录，
+所以两个实例不会共用角色卡。想让两个角色各自记住不同的东西，端口不同即可——
+它们的记忆库本来就是分开的。
 
 ### 会话隔离
 
@@ -334,7 +337,7 @@ fademem export -o mem.json   # 导出全部记忆
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .   # 123 个测试，3 秒内跑完
+python -m unittest discover -s tests -t .   # 130 个测试，3 秒内跑完
 ```
 
 目录：

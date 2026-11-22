@@ -60,10 +60,19 @@ def _persona_template() -> dict[str, Any]:
 
 def cmd_init(args: argparse.Namespace) -> int:
     paths = default_paths()
-    cfg_path = write_default_config(args.config or paths["config"], overwrite=args.force)
+    custom = bool(args.config)
+    cfg_path = write_default_config(
+        args.config or paths["config"], overwrite=args.force, localize=custom
+    )
     print(f"配置：{cfg_path}")
 
-    persona_path = os.path.expanduser(args.persona or paths["persona"])
+    if args.persona:
+        persona_path = os.path.expanduser(args.persona)
+    elif custom:
+        # 自定义配置路径时，角色卡跟配置放在一起，免得两份配置共用一张卡
+        persona_path = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), "persona.json")
+    else:
+        persona_path = paths["persona"]
     if not os.path.exists(persona_path) or args.force:
         os.makedirs(os.path.dirname(os.path.abspath(persona_path)), exist_ok=True)
         with open(persona_path, "w", encoding="utf-8") as fh:

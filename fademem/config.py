@@ -100,12 +100,21 @@ def default_paths() -> dict[str, str]:
     }
 
 
-def write_default_config(path: str, overwrite: bool = False) -> str:
+def write_default_config(path: str, overwrite: bool = False, localize: bool = False) -> str:
+    """写默认配置。
+
+    ``localize=True`` 时把角色卡和记忆库也落在配置文件旁边——用 ``-c`` 指定
+    自定义路径（多角色场景）时应该这样，否则两份配置会指向同一张角色卡。
+    """
     path = os.path.expanduser(path)
     if os.path.exists(path) and not overwrite:
         return path
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    payload = {k: v for k, v in DEFAULT_CONFIG.items() if not k.startswith("_")}
+    payload = copy.deepcopy({k: v for k, v in DEFAULT_CONFIG.items() if not k.startswith("_")})
+    if localize:
+        base = os.path.dirname(os.path.abspath(path))
+        payload.setdefault("memory", {})["db"] = os.path.join(base, "memory.db")
+        payload["persona"] = os.path.join(base, "persona.json")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     return path
