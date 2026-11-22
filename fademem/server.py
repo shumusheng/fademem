@@ -303,22 +303,43 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
+    def _write(self, data: bytes) -> bool:
+        """写回客户端。客户端中途断开是常态（用户关窗口、切会话），不该刷堆栈。"""
+        if not data:
+            return True
+        try:
+            self.wfile.write(data)
+            return True
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self.close_connection = True
+            return False
+
     def _json(self, status: int, payload: Any) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self._cors()
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self._cors()
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self.close_connection = True
+            return
+        self._write(data)
 
     def _chunk(self, data: bytes) -> None:
         if not data:
             return
-        self.wfile.write(f"{len(data):X}\r\n".encode("ascii"))
-        self.wfile.write(data)
-        self.wfile.write(b"\r\n")
-        self.wfile.flush()
+        try:
+            if not self._write(f"{len(data):X}\r\n".encode("ascii")):
+                return
+            if not self._write(data):
+                return
+            if not self._write(b"\r\n"):
+                return
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self.close_connection = True
 
     def _read_json(self) -> dict[str, Any]:
         try:
@@ -416,30 +437,30 @@ class Handler(BaseHTTPRequestHandler):
         result = self.app.store.consolidate(str(session) if session else None)
         return self._json(200, result)
 
+    _FALLBACK_MODELS = {
+        "object": "list",
+        "data": [{"id": "fademem-proxy", "object": "model", "owned_by": "fademem"}],
+    }
+
     def _models(self) -> None:
         up = self.app.cfg.get("upstream", {})
+        base = str(up.get("base_url", "")).rstrip("/")
+        key = (up.get("api_key") or "").strip()
+        auth = self.headers.get("Authorization")
+        # 客户端（Cherry Studio / Chatbox / 酒馆）常在启动时拉一次模型列表。
+        # 没配上游或没凭据时直接给兜底列表，别让 UI 卡在转圈上。
+        if not base or not (key or (up.get("passthrough_auth", True) and auth)):
+            return self._json(200, self._FALLBACK_MODELS)
         try:
-            req = urllib.request.Request(
-                str(up.get("base_url", "")).rstrip("/") + "/models", method="GET"
-            )
-            key = (up.get("api_key") or "").strip()
-            auth = self.headers.get("Authorization")
+            req = urllib.request.Request(base + "/models", method="GET")
             if up.get("passthrough_auth", True) and auth:
                 req.add_header("Authorization", auth)
-            elif key:
+            else:
                 req.add_header("Authorization", f"Bearer {key}")
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 return self._json(200, json.loads(resp.read().decode("utf-8")))
         except Exception:  # noqa: BLE001
-            return self._json(
-                200,
-                {
-                    "object": "list",
-                    "data": [
-                        {"id": "fademem-proxy", "object": "model", "owned_by": "fademem"}
-                    ],
-                },
-            )
+            return self._json(200, self._FALLBACK_MODELS)
 
     def _page(self) -> None:
         stats = self.app.store.stats()
@@ -502,6 +523,18 @@ class Handler(BaseHTTPRequestHandler):
             req.add_header(str(name), str(value))
         return urllib.request.urlopen(req, timeout=float(up.get("timeout") or 180))
 
+    def _upstream_hint(self) -> str:
+        """第一次跑就会撞上的错误，提示要能直接照着改。"""
+        up = self.app.cfg.get("upstream", {})
+        key = (up.get("api_key") or "").strip()
+        client_auth = self.headers.get("Authorization")
+        if not key and not (up.get("passthrough_auth", True) and client_auth):
+            return "还没配 API key：编辑 config.json 里的 upstream.api_key。"
+        return (
+            "检查 config.json 里的 upstream.base_url 是否写对；"
+            "若上游在墙外，需要给本进程设置 HTTPS_PROXY 环境变量。"
+        )
+
     def _chat(self) -> None:
         try:
             payload = self._read_json()
@@ -540,7 +573,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as exc:  # noqa: BLE001
             return self._json(
-                502, {"error": {"message": f"上游请求失败：{type(exc).__name__}: {exc}"}}
+                502,
+                {
+                    "error": {
+                        "message": f"上游请求失败：{type(exc).__name__}: {exc}\n{self._upstream_hint()}",
+                        "type": "upstream_error",
+                    }
+                },
             )
 
         with resp:

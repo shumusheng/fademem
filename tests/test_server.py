@@ -1,7 +1,15 @@
 import json
+import types
 import unittest
+from unittest import mock
 
-from fademem.server import StreamRewriter, content_to_text, inject_system, resolve_session
+from fademem.server import (
+    Handler,
+    StreamRewriter,
+    content_to_text,
+    inject_system,
+    resolve_session,
+)
 from fademem.store import Candidate
 
 
@@ -115,6 +123,91 @@ class HelperTest(unittest.TestCase):
         msgs = [{"role": "system", "content": "orig"}]
         inject_system(msgs, "new", merge=True)
         self.assertEqual(msgs[0]["content"], "orig")
+
+
+class ModelsFallbackTest(unittest.TestCase):
+    """客户端启动会拉一次模型列表，上游不可达时不能把 UI 卡住。"""
+
+    def _handler(self, upstream, auth=None):
+        h = object.__new__(Handler)
+        h.app = types.SimpleNamespace(cfg={"upstream": upstream})
+        h.headers = {"Authorization": auth} if auth else {}
+        h.captured = None
+        h.close_connection = False
+        h._json = lambda status, payload: setattr(h, "captured", (status, payload))
+        return h
+
+    def test_no_key_and_no_client_auth_skips_network(self):
+        h = self._handler({"base_url": "https://例.invalid/v1", "api_key": ""})
+        with mock.patch("fademem.server.urllib.request.urlopen",
+                        side_effect=AssertionError("不该发请求")):
+            h._models()
+        self.assertEqual(h.captured[0], 200)
+        self.assertEqual(h.captured[1]["data"][0]["id"], "fademem-proxy")
+
+    def test_unreachable_upstream_falls_back(self):
+        h = self._handler({"base_url": "https://例.invalid/v1", "api_key": "sk-x"})
+        with mock.patch("fademem.server.urllib.request.urlopen",
+                        side_effect=OSError("boom")):
+            h._models()
+        self.assertEqual(h.captured[1]["data"][0]["id"], "fademem-proxy")
+
+    def test_probes_upstream_when_client_sends_auth(self):
+        h = self._handler({"base_url": "https://例.invalid/v1", "api_key": ""}, auth="Bearer abc")
+        fake = mock.MagicMock()
+        fake.__enter__.return_value.read.return_value = b'{"object":"list","data":[]}'
+        with mock.patch("fademem.server.urllib.request.urlopen", return_value=fake) as m:
+            h._models()
+        self.assertTrue(m.called)
+        self.assertEqual(h.captured[1], {"object": "list", "data": []})
+
+
+class BrokenPipeTest(unittest.TestCase):
+    """客户端中途断开是常态，不该把堆栈吐到用户终端。"""
+
+    def _handler(self):
+        h = object.__new__(Handler)
+        h.close_connection = False
+        h.wfile = mock.MagicMock()
+        h.wfile.write.side_effect = ConnectionAbortedError(10053, "aborted")
+        return h
+
+    def test_write_reports_failure_without_raising(self):
+        h = self._handler()
+        self.assertFalse(h._write(b"data"))
+        self.assertTrue(h.close_connection)
+
+    def test_chunk_swallows_disconnect(self):
+        h = self._handler()
+        h._chunk(b"data")  # 不抛异常即通过
+        self.assertTrue(h.close_connection)
+
+    def test_write_passes_through_normally(self):
+        h = self._handler()
+        h.wfile = mock.MagicMock()
+        self.assertTrue(h._write(b"data"))
+        self.assertFalse(h.close_connection)
+
+
+class UpstreamHintTest(unittest.TestCase):
+
+    def _handler(self, upstream, auth=None):
+        h = object.__new__(Handler)
+        h.app = types.SimpleNamespace(cfg={"upstream": upstream})
+        h.headers = {"Authorization": auth} if auth else {}
+        return h
+
+    def test_hints_missing_key(self):
+        hint = self._handler({"base_url": "https://x/v1", "api_key": ""})._upstream_hint()
+        self.assertIn("api_key", hint)
+
+    def test_hints_bad_url_when_key_present(self):
+        hint = self._handler({"base_url": "https://x/v1", "api_key": "sk-1"})._upstream_hint()
+        self.assertIn("base_url", hint)
+
+    def test_passthrough_auth_counts_as_configured(self):
+        h = self._handler({"base_url": "https://x/v1", "api_key": ""}, auth="Bearer u")
+        self.assertIn("base_url", h._upstream_hint())
 
 
 if __name__ == "__main__":

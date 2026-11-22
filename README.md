@@ -334,7 +334,7 @@ fademem export -o mem.json   # 导出全部记忆
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .   # 114 个测试，3 秒内跑完
+python -m unittest discover -s tests -t .   # 123 个测试，3 秒内跑完
 ```
 
 目录：
