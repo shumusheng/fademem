@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fademem"
+version = "0.1.0"
+description = "会遗忘的角色扮演记忆层：给任意 AI 客户端加上遗忘曲线和人味"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["roleplay", "llm", "memory", "ebbinghaus", "spaced-repetition", "openai-proxy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.scripts]
+fademem = "fademem.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fademem*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

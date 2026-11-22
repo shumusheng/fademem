@@ -1,0 +1,45 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8770,
+    "verbose": false
+  },
+  "upstream": {
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "passthrough_auth": true,
+    "timeout": 180,
+    "extra_headers": {}
+  },
+  "memory": {
+    "base_stability_days": 6.0,
+    "alpha": 1.4,
+    "beta": 0.9,
+    "max_items": 8,
+    "min_score": 0.02,
+    "forget_below": 0.06,
+    "ambient_items": 2,
+    "ambient_min_importance": 0.55,
+    "flashback_rate": 0.05,
+    "fuzz_below": 0.55,
+    "reinforce_on_recall": true,
+    "sweep_every": 50
+  },
+  "extraction": {
+    "mode": "heuristic",
+    "allow_generic": true,
+    "max_items": 6
+  },
+  "style": {
+    "enabled": true,
+    "max_sentences": 3,
+    "include_self_check": true,
+    "deslop": true,
+    "deslop_stream": true,
+    "extra_rules": []
+  },
+  "prompt": {
+    "merge_system": true,
+    "language": "auto"
+  }
+}
